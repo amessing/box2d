@@ -26,6 +26,8 @@
 #include "box2d/b2_joint.h"
 #include "box2d/b2_world.h"
 
+#include <new>
+
 b2Body::b2Body(const b2BodyDef* bd, b2World* world)
 {
 	b2Assert(bd->position.IsValid());
@@ -49,7 +51,7 @@ b2Body::b2Body(const b2BodyDef* bd, b2World* world)
 	{
 		m_flags |= e_autoSleepFlag;
 	}
-	if (bd->awake)
+	if (bd->awake && bd->type != b2_staticBody)
 	{
 		m_flags |= e_awakeFlag;
 	}
@@ -89,16 +91,8 @@ b2Body::b2Body(const b2BodyDef* bd, b2World* world)
 
 	m_type = bd->type;
 
-	if (m_type == b2_dynamicBody)
-	{
-		m_mass = 1.0f;
-		m_invMass = 1.0f;
-	}
-	else
-	{
-		m_mass = 0.0f;
-		m_invMass = 0.0f;
-	}
+	m_mass = 0.0f;
+	m_invMass = 0.0f;
 
 	m_I = 0.0f;
 	m_invI = 0.0f;
@@ -137,6 +131,7 @@ void b2Body::SetType(b2BodyType type)
 		m_angularVelocity = 0.0f;
 		m_sweep.a0 = m_sweep.a;
 		m_sweep.c0 = m_sweep.c;
+		m_flags &= ~e_awakeFlag;
 		SynchronizeFixtures();
 	}
 
@@ -329,12 +324,6 @@ void b2Body::ResetMassData()
 		m_invMass = 1.0f / m_mass;
 		localCenter *= m_invMass;
 	}
-	else
-	{
-		// Force all dynamic bodies to have a positive mass.
-		m_mass = 1.0f;
-		m_invMass = 1.0f;
-	}
 
 	if (m_I > 0.0f && (m_flags & e_fixedRotationFlag) == 0)
 	{
@@ -445,18 +434,32 @@ void b2Body::SetTransform(const b2Vec2& position, float angle)
 	{
 		f->Synchronize(broadPhase, m_xf, m_xf);
 	}
+
+	// Check for new contacts the next step
+	m_world->m_newContacts = true;
 }
 
 void b2Body::SynchronizeFixtures()
 {
-	b2Transform xf1;
-	xf1.q.Set(m_sweep.a0);
-	xf1.p = m_sweep.c0 - b2Mul(xf1.q, m_sweep.localCenter);
-
 	b2BroadPhase* broadPhase = &m_world->m_contactManager.m_broadPhase;
-	for (b2Fixture* f = m_fixtureList; f; f = f->m_next)
+
+	if (m_flags & b2Body::e_awakeFlag)
 	{
-		f->Synchronize(broadPhase, xf1, m_xf);
+		b2Transform xf1;
+		xf1.q.Set(m_sweep.a0);
+		xf1.p = m_sweep.c0 - b2Mul(xf1.q, m_sweep.localCenter);
+
+		for (b2Fixture* f = m_fixtureList; f; f = f->m_next)
+		{
+			f->Synchronize(broadPhase, xf1, m_xf);
+		}
+	}
+	else
+	{
+		for (b2Fixture* f = m_fixtureList; f; f = f->m_next)
+		{
+			f->Synchronize(broadPhase, m_xf, m_xf);
+		}
 	}
 }
 
@@ -532,28 +535,31 @@ void b2Body::Dump()
 {
 	int32 bodyIndex = m_islandIndex;
 
-	b2Log("{\n");
-	b2Log("  b2BodyDef bd;\n");
-	b2Log("  bd.type = b2BodyType(%d);\n", m_type);
-	b2Log("  bd.position.Set(%.15lef, %.15lef);\n", m_xf.p.x, m_xf.p.y);
-	b2Log("  bd.angle = %.15lef;\n", m_sweep.a);
-	b2Log("  bd.linearVelocity.Set(%.15lef, %.15lef);\n", m_linearVelocity.x, m_linearVelocity.y);
-	b2Log("  bd.angularVelocity = %.15lef;\n", m_angularVelocity);
-	b2Log("  bd.linearDamping = %.15lef;\n", m_linearDamping);
-	b2Log("  bd.angularDamping = %.15lef;\n", m_angularDamping);
-	b2Log("  bd.allowSleep = bool(%d);\n", m_flags & e_autoSleepFlag);
-	b2Log("  bd.awake = bool(%d);\n", m_flags & e_awakeFlag);
-	b2Log("  bd.fixedRotation = bool(%d);\n", m_flags & e_fixedRotationFlag);
-	b2Log("  bd.bullet = bool(%d);\n", m_flags & e_bulletFlag);
-	b2Log("  bd.enabled = bool(%d);\n", m_flags & e_enabledFlag);
-	b2Log("  bd.gravityScale = %.15lef;\n", m_gravityScale);
-	b2Log("  bodies[%d] = m_world->CreateBody(&bd);\n", m_islandIndex);
-	b2Log("\n");
+	// %.9g is sufficient to save and load the same value using text
+	// FLT_DECIMAL_DIG == 9
+
+	b2Dump("{\n");
+	b2Dump("  b2BodyDef bd;\n");
+	b2Dump("  bd.type = b2BodyType(%d);\n", m_type);
+	b2Dump("  bd.position.Set(%.9g, %.9g);\n", m_xf.p.x, m_xf.p.y);
+	b2Dump("  bd.angle = %.9g;\n", m_sweep.a);
+	b2Dump("  bd.linearVelocity.Set(%.9g, %.9g);\n", m_linearVelocity.x, m_linearVelocity.y);
+	b2Dump("  bd.angularVelocity = %.9g;\n", m_angularVelocity);
+	b2Dump("  bd.linearDamping = %.9g;\n", m_linearDamping);
+	b2Dump("  bd.angularDamping = %.9g;\n", m_angularDamping);
+	b2Dump("  bd.allowSleep = bool(%d);\n", m_flags & e_autoSleepFlag);
+	b2Dump("  bd.awake = bool(%d);\n", m_flags & e_awakeFlag);
+	b2Dump("  bd.fixedRotation = bool(%d);\n", m_flags & e_fixedRotationFlag);
+	b2Dump("  bd.bullet = bool(%d);\n", m_flags & e_bulletFlag);
+	b2Dump("  bd.enabled = bool(%d);\n", m_flags & e_enabledFlag);
+	b2Dump("  bd.gravityScale = %.9g;\n", m_gravityScale);
+	b2Dump("  bodies[%d] = m_world->CreateBody(&bd);\n", m_islandIndex);
+	b2Dump("\n");
 	for (b2Fixture* f = m_fixtureList; f; f = f->m_next)
 	{
-		b2Log("  {\n");
+		b2Dump("  {\n");
 		f->Dump(bodyIndex);
-		b2Log("  }\n");
+		b2Dump("  }\n");
 	}
-	b2Log("}\n");
+	b2Dump("}\n");
 }

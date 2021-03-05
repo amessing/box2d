@@ -41,7 +41,7 @@ public:
 			b2Body* ground = m_world->CreateBody(&bd);
 
 			b2EdgeShape shape;
-			shape.Set(b2Vec2(-20.0f, 0.0f), b2Vec2(20.0f, 0.0f));
+			shape.SetTwoSided(b2Vec2(-20.0f, 0.0f), b2Vec2(20.0f, 0.0f));
 			ground->CreateFixture(&shape, 0.0f);
 		}
 
@@ -113,10 +113,8 @@ public:
 	void Step(Settings& settings) override
 	{
 		Test::Step(settings);
-		g_debugDraw.DrawString(5, m_textLine, "Press: (c) create a shape, (d) destroy a shape.");
-		m_textLine += m_textIncrement;
 
-        b2Vec2 v = m_character->GetBody()->GetLinearVelocity();
+		b2Vec2 v = m_character->GetBody()->GetLinearVelocity();
         g_debugDraw.DrawString(5, m_textLine, "Character Linear Velocity: %f", v.y);
 		m_textLine += m_textIncrement;
 	}

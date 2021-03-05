@@ -1,5 +1,3 @@
-project(testbed LANGUAGES CXX)
-
 set (TESTBED_SOURCE_FILES
 	draw.cpp
 	draw.h
@@ -13,7 +11,7 @@ set (TESTBED_SOURCE_FILES
 	test.cpp
 	test.h
 	tests/add_pair.cpp
-	tests/apply_forces.cpp
+	tests/apply_force.cpp
 	tests/body_types.cpp
 	tests/box_stack.cpp
 	tests/breakable.cpp
@@ -57,7 +55,6 @@ set (TESTBED_SOURCE_FILES
 	tests/restitution.cpp
 	tests/revolute_joint.cpp
 	tests/rope.cpp
-	tests/rope_joint.cpp
 	tests/sensor.cpp
 	tests/shape_cast.cpp
 	tests/shape_editing.cpp
@@ -68,6 +65,9 @@ set (TESTBED_SOURCE_FILES
 	tests/tiles.cpp
 	tests/time_of_impact.cpp
 	tests/tumbler.cpp
+	tests/web.cpp
+	tests/wheel_joint.cpp
+	tests/wrecking_ball.cpp
 )
 
 add_executable(testbed ${TESTBED_SOURCE_FILES})
@@ -79,4 +79,14 @@ set_target_properties(testbed PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${TESTBED_SOURCE_FILES} ${TESTBED_RESOURCE_FILES})
+# message(STATUS "runtime = ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+# message(STATUS "binary = ${CMAKE_CURRENT_BINARY_DIR}")
+
+# Copy font files, etc
+add_custom_command(
+        TARGET testbed POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/
+                ${CMAKE_CURRENT_BINARY_DIR}/data/)
+
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${TESTBED_SOURCE_FILES})

@@ -453,15 +453,15 @@ void b2World::Solve(const b2TimeStep& step)
 			b2Assert(b->IsEnabled() == true);
 			island.Add(b);
 
-			// Make sure the body is awake (without resetting sleep timer).
-			b->m_flags |= b2Body::e_awakeFlag;
-
 			// To keep islands as small as possible, we don't
 			// propagate islands across static bodies.
 			if (b->GetType() == b2_staticBody)
 			{
 				continue;
 			}
+
+			// Make sure the body is awake (without resetting sleep timer).
+			b->m_flags |= b2Body::e_awakeFlag;
 
 			// Search all contacts connected to this body.
 			for (b2ContactEdge* ce = b->m_contactList; ce; ce = ce->next)
@@ -1058,6 +1058,12 @@ void b2World::DrawShape(b2Fixture* fixture, const b2Transform& xf, const b2Color
 			b2Vec2 v1 = b2Mul(xf, edge->m_vertex1);
 			b2Vec2 v2 = b2Mul(xf, edge->m_vertex2);
 			m_debugDraw->DrawSegment(v1, v2, color);
+
+			if (edge->m_oneSided == false)
+			{
+				m_debugDraw->DrawPoint(v1, 4.0f, color);
+				m_debugDraw->DrawPoint(v2, 4.0f, color);
+			}
 		}
 		break;
 
@@ -1067,31 +1073,12 @@ void b2World::DrawShape(b2Fixture* fixture, const b2Transform& xf, const b2Color
 			int32 count = chain->m_count;
 			const b2Vec2* vertices = chain->m_vertices;
 
-			b2Color ghostColor(0.75f * color.r, 0.75f * color.g, 0.75f * color.b, color.a);
-
 			b2Vec2 v1 = b2Mul(xf, vertices[0]);
-			m_debugDraw->DrawPoint(v1, 4.0f, color);
-
-			if (chain->m_hasPrevVertex)
-			{
-				b2Vec2 vp = b2Mul(xf, chain->m_prevVertex);
-				m_debugDraw->DrawSegment(vp, v1, ghostColor);
-				m_debugDraw->DrawCircle(vp, 0.1f, ghostColor);
-			}
-
 			for (int32 i = 1; i < count; ++i)
 			{
 				b2Vec2 v2 = b2Mul(xf, vertices[i]);
 				m_debugDraw->DrawSegment(v1, v2, color);
-				m_debugDraw->DrawPoint(v2, 4.0f, color);
 				v1 = v2;
-			}
-
-			if (chain->m_hasNextVertex)
-			{
-				b2Vec2 vn = b2Mul(xf, chain->m_nextVertex);
-				m_debugDraw->DrawSegment(v1, vn, ghostColor);
-				m_debugDraw->DrawCircle(vn, 0.1f, ghostColor);
 			}
 		}
 		break;
@@ -1111,63 +1098,13 @@ void b2World::DrawShape(b2Fixture* fixture, const b2Transform& xf, const b2Color
 			m_debugDraw->DrawSolidPolygon(vertices, vertexCount, color);
 		}
 		break;
-            
-    default:
-        break;
-	}
-}
-
-void b2World::DrawJoint(b2Joint* joint)
-{
-	b2Body* bodyA = joint->GetBodyA();
-	b2Body* bodyB = joint->GetBodyB();
-	const b2Transform& xf1 = bodyA->GetTransform();
-	const b2Transform& xf2 = bodyB->GetTransform();
-	b2Vec2 x1 = xf1.p;
-	b2Vec2 x2 = xf2.p;
-	b2Vec2 p1 = joint->GetAnchorA();
-	b2Vec2 p2 = joint->GetAnchorB();
-
-	b2Color color(0.5f, 0.8f, 0.8f);
-
-	switch (joint->GetType())
-	{
-	case e_distanceJoint:
-		m_debugDraw->DrawSegment(p1, p2, color);
-		break;
-
-	case e_pulleyJoint:
-	{
-		b2PulleyJoint* pulley = (b2PulleyJoint*)joint;
-		b2Vec2 s1 = pulley->GetGroundAnchorA();
-		b2Vec2 s2 = pulley->GetGroundAnchorB();
-		m_debugDraw->DrawSegment(s1, p1, color);
-		m_debugDraw->DrawSegment(s2, p2, color);
-		m_debugDraw->DrawSegment(s1, s2, color);
-	}
-	break;
-
-	case e_mouseJoint:
-	{
-		b2Color c;
-		c.Set(0.0f, 1.0f, 0.0f);
-		m_debugDraw->DrawPoint(p1, 4.0f, c);
-		m_debugDraw->DrawPoint(p2, 4.0f, c);
-
-		c.Set(0.8f, 0.8f, 0.8f);
-		m_debugDraw->DrawSegment(p1, p2, c);
-
-	}
-	break;
 
 	default:
-		m_debugDraw->DrawSegment(x1, p1, color);
-		m_debugDraw->DrawSegment(p1, p2, color);
-		m_debugDraw->DrawSegment(x2, p2, color);
+	break;
 	}
 }
 
-void b2World::DrawDebugData()
+void b2World::DebugDraw()
 {
 	if (m_debugDraw == nullptr)
 	{
@@ -1183,7 +1120,12 @@ void b2World::DrawDebugData()
 			const b2Transform& xf = b->GetTransform();
 			for (b2Fixture* f = b->GetFixtureList(); f; f = f->GetNext())
 			{
-				if (b->IsEnabled() == false)
+				if (b->GetType() == b2_dynamicBody && b->m_mass == 0.0f)
+				{
+					// Bad body
+					DrawShape(f, xf, b2Color(1.0f, 0.0f, 0.0f));
+				}
+				else if (b->IsEnabled() == false)
 				{
 					DrawShape(f, xf, b2Color(0.5f, 0.5f, 0.3f));
 				}
@@ -1211,7 +1153,7 @@ void b2World::DrawDebugData()
 	{
 		for (b2Joint* j = m_jointList; j; j = j->GetNext())
 		{
-			DrawJoint(j);
+			j->Draw(m_debugDraw);
 		}
 	}
 
@@ -1220,13 +1162,14 @@ void b2World::DrawDebugData()
 		b2Color color(0.3f, 0.9f, 0.9f);
 		for (b2Contact* c = m_contactManager.m_contactList; c; c = c->GetNext())
 		{
-			//b2Fixture* fixtureA = c->GetFixtureA();
-			//b2Fixture* fixtureB = c->GetFixtureB();
+			b2Fixture* fixtureA = c->GetFixtureA();
+			b2Fixture* fixtureB = c->GetFixtureB();
+			int32 indexA = c->GetChildIndexA();
+			int32 indexB = c->GetChildIndexB();
+			b2Vec2 cA = fixtureA->GetAABB(indexA).GetCenter();
+			b2Vec2 cB = fixtureB->GetAABB(indexB).GetCenter();
 
-			//b2Vec2 cA = fixtureA->GetAABB().GetCenter();
-			//b2Vec2 cB = fixtureB->GetAABB().GetCenter();
-
-			//g_debugDraw->DrawSegment(cA, cB, color);
+			m_debugDraw->DrawSegment(cA, cB, color);
 		}
 	}
 
@@ -1321,11 +1264,14 @@ void b2World::Dump()
 		return;
 	}
 
-	b2Log("b2Vec2 g(%.15lef, %.15lef);\n", m_gravity.x, m_gravity.y);
-	b2Log("m_world->SetGravity(g);\n");
+	b2OpenDump("box2d_dump.inl");
 
-	b2Log("b2Body** bodies = (b2Body**)b2Alloc(%d * sizeof(b2Body*));\n", m_bodyCount);
-	b2Log("b2Joint** joints = (b2Joint**)b2Alloc(%d * sizeof(b2Joint*));\n", m_jointCount);
+	b2Dump("b2Vec2 g(%.9g, %.9g);\n", m_gravity.x, m_gravity.y);
+	b2Dump("m_world->SetGravity(g);\n");
+
+	b2Dump("b2Body** bodies = (b2Body**)b2Alloc(%d * sizeof(b2Body*));\n", m_bodyCount);
+	b2Dump("b2Joint** joints = (b2Joint**)b2Alloc(%d * sizeof(b2Joint*));\n", m_jointCount);
+
 	int32 i = 0;
 	for (b2Body* b = m_bodyList; b; b = b->m_next)
 	{
@@ -1349,9 +1295,9 @@ void b2World::Dump()
 			continue;
 		}
 
-		b2Log("{\n");
+		b2Dump("{\n");
 		j->Dump();
-		b2Log("}\n");
+		b2Dump("}\n");
 	}
 
 	// Second pass on joints, only gear joints.
@@ -1362,13 +1308,15 @@ void b2World::Dump()
 			continue;
 		}
 
-		b2Log("{\n");
+		b2Dump("{\n");
 		j->Dump();
-		b2Log("}\n");
+		b2Dump("}\n");
 	}
 
-	b2Log("b2Free(joints);\n");
-	b2Log("b2Free(bodies);\n");
-	b2Log("joints = nullptr;\n");
-	b2Log("bodies = nullptr;\n");
+	b2Dump("b2Free(joints);\n");
+	b2Dump("b2Free(bodies);\n");
+	b2Dump("joints = nullptr;\n");
+	b2Dump("bodies = nullptr;\n");
+
+	b2CloseDump();
 }

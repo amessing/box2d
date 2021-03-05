@@ -30,7 +30,14 @@
 #include "settings.h"
 #include "test.h"
 
+#include <algorithm>
 #include <stdio.h>
+#include <thread>
+#include <chrono>
+
+#if defined(_WIN32)
+#include <crtdbg.h>
+#endif
 
 GLFWwindow* g_mainWindow = nullptr;
 static int32 s_testSelection = 0;
@@ -80,8 +87,28 @@ static void CreateUI(GLFWwindow* window, const char* glslVersion = NULL)
 		assert(false);
 	}
 
-	const char* fontPath = "data/droid_sans.ttf";
-	ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath, 13.0f);
+	// Search for font file
+	const char* fontPath1 = "data/droid_sans.ttf";
+	const char* fontPath2 = "../data/droid_sans.ttf";
+	const char* fontPath = nullptr;
+	FILE* file1 = fopen(fontPath1, "rb");
+	FILE* file2 = fopen(fontPath2, "rb");
+	if (file1)
+	{
+		fontPath = fontPath1;
+		fclose(file1);
+	}
+	
+	if (file2)
+	{
+		fontPath = fontPath2;
+		fclose(file2);
+	}
+
+	if (fontPath)
+	{
+		ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath, 13.0f);
+	}
 }
 
 static void ResizeWindowCallback(GLFWwindow*, int width, int height)
@@ -485,7 +512,17 @@ int main(int, char**)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
 	sprintf(buffer, "Box2D Testbed Version %d.%d.%d", b2_version.major, b2_version.minor, b2_version.revision);
-	g_mainWindow = glfwCreateWindow(g_camera.m_width, g_camera.m_height, buffer, NULL, NULL);
+
+	bool fullscreen = false;
+	if (fullscreen)
+	{
+		g_mainWindow = glfwCreateWindow(1920, 1080, buffer, glfwGetPrimaryMonitor(), NULL);
+	}
+	else
+	{
+		g_mainWindow = glfwCreateWindow(g_camera.m_width, g_camera.m_height, buffer, NULL, NULL);
+	}
+
 	if (g_mainWindow == NULL)
 	{
 		fprintf(stderr, "Failed to open GLFW g_mainWindow.\n");
@@ -517,15 +554,17 @@ int main(int, char**)
 	s_test = g_testEntries[s_settings.m_testIndex].createFcn();
 
 	// Control the frame rate. One draw per monitor refresh.
-	glfwSwapInterval(1);
+	//glfwSwapInterval(1);
 
-	double time1 = glfwGetTime();
-	double frameTime = 0.0;
-   
-	glClearColor(0.3f, 0.3f, 0.3f, 1.f);
-	
+	glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+
+	std::chrono::duration<double> frameTime(0.0);
+	std::chrono::duration<double> sleepAdjust(0.0);
+
 	while (!glfwWindowShouldClose(g_mainWindow))
 	{
+		std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+
 		glfwGetWindowSize(g_mainWindow, &g_camera.m_width, &g_camera.m_height);
         
         int bufferWidth, bufferHeight;
@@ -554,6 +593,21 @@ int main(int, char**)
 
 		s_test->Step(s_settings);
 
+		UpdateUI();
+
+		// ImGui::ShowDemoWindow();
+			
+		if (g_debugDraw.m_showUI)
+		{
+			sprintf(buffer, "%.1f ms", 1000.0 * frameTime.count());
+			g_debugDraw.DrawString(5, g_camera.m_height - 20, buffer);
+		}
+
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+		glfwSwapBuffers(g_mainWindow);
+
 		if (s_testSelection != s_settings.m_testIndex)
 		{
 			s_settings.m_testIndex = s_testSelection;
@@ -563,28 +617,24 @@ int main(int, char**)
 			g_camera.m_center.Set(0.0f, 20.0f);
 		}
 
-		UpdateUI();
+		glfwPollEvents();
 
-		// ImGui::ShowDemoWindow();
-
-		// Measure speed
-		double time2 = glfwGetTime();
-		double alpha = 0.9;
-		frameTime = alpha * frameTime + (1.0 - alpha) * (time2 - time1);
-		time1 = time2;
-
-		if (g_debugDraw.m_showUI)
+		// Throttle to cap at 60Hz. This adaptive using a sleep adjustment. This could be improved by
+		// using mm_pause or equivalent for the last millisecond.
+		std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+		std::chrono::duration<double> target(1.0 / 60.0);
+		std::chrono::duration<double> timeUsed = t2 - t1;
+		std::chrono::duration<double> sleepTime = target - timeUsed + sleepAdjust;
+		if (sleepTime > std::chrono::duration<double>(0))
 		{
-			sprintf(buffer, "%.1f ms", 1000.0 * frameTime);
-			g_debugDraw.DrawString(5, g_camera.m_height - 20, buffer);
+			std::this_thread::sleep_for(sleepTime);
 		}
 
-		ImGui::Render();
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+		std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+		frameTime = t3 - t1;
 
-		glfwSwapBuffers(g_mainWindow);
-
-		glfwPollEvents();
+		// Compute the sleep adjustment using a low pass filter
+		sleepAdjust = 0.9 * sleepAdjust + 0.1 * (target - frameTime);
 	}
 
 	delete s_test;

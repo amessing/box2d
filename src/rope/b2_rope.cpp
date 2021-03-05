@@ -173,6 +173,8 @@ void b2Rope::Create(const b2RopeDef& def)
 			continue;
 		}
 
+		// a1 = h2 / (h1 + h2)
+		// a2 = h1 / (h1 + h2)
 		c.alpha1 = b2Dot(e2, r) / rr;
 		c.alpha2 = b2Dot(e1, r) / rr;
 	}
@@ -304,6 +306,10 @@ void b2Rope::Step(float dt, int32 iterations, const b2Vec2& position)
 		{
 			SolveBend_PBD_Height();
 		}
+		else if (m_tuning.bendingModel == b2_pbdTriangleBendingModel)
+		{
+			SolveBend_PBD_Triangle();
+		}
 
 		if (m_tuning.stretchingModel == b2_pbdStretchingModel)
 		{
@@ -402,9 +408,9 @@ void b2Rope::SolveStretch_XPBD(float dt)
 			continue;
 		}
 
-		const float alpha = 1.0f / (c.spring * dt * dt);
-		const float beta = dt * dt * c.damper;
-		const float sigma = alpha * beta / dt;
+		const float alpha = 1.0f / (c.spring * dt * dt);	// 1 / kg
+		const float beta = dt * dt * c.damper;				// kg * s
+		const float sigma = alpha * beta / dt;				// non-dimensional
 		float C = L - c.L;
 
 		// This is using the initial velocities
@@ -712,14 +718,6 @@ void b2Rope::SolveBend_PBD_Height()
 		b2Vec2 p2 = m_ps[c.i2];
 		b2Vec2 p3 = m_ps[c.i3];
 
-		b2Vec2 r = p3 - p1;
-
-		float rr = r.LengthSquared();
-		if (rr == 0.0f)
-		{
-			continue;
-		}
-
 		// Barycentric coordinates are held constant
 		b2Vec2 d = c.alpha1 * p1 + c.alpha2 * p3 - p2;
 		float dLen = d.Length();
@@ -735,7 +733,7 @@ void b2Rope::SolveBend_PBD_Height()
 		b2Vec2 J2 = -dHat;
 		b2Vec2 J3 = c.alpha2 * dHat;
 
-		float sum = c.invMass1 * b2Dot(J1, J1) + c.invMass2 * b2Dot(J2, J2) + c.invMass3 * b2Dot(J3, J3);
+		float sum = c.invMass1 * c.alpha1 * c.alpha1 + c.invMass2 + c.invMass3 * c.alpha2 * c.alpha2;
 
 		if (sum == 0.0f)
 		{
@@ -753,6 +751,42 @@ void b2Rope::SolveBend_PBD_Height()
 		m_ps[c.i1] = p1;
 		m_ps[c.i2] = p2;
 		m_ps[c.i3] = p3;
+	}
+}
+
+// M. Kelager: A Triangle Bending Constraint Model for PBD
+void b2Rope::SolveBend_PBD_Triangle()
+{
+	const float stiffness = m_tuning.bendStiffness;
+
+	for (int32 i = 0; i < m_bendCount; ++i)
+	{
+		const b2RopeBend& c = m_bendConstraints[i];
+
+		b2Vec2 b0 = m_ps[c.i1];
+		b2Vec2 v = m_ps[c.i2];
+		b2Vec2 b1 = m_ps[c.i3];
+
+		float wb0 = c.invMass1;
+		float wv = c.invMass2;
+		float wb1 = c.invMass3;
+
+		float W = wb0 + wb1 + 2.0f * wv;
+		float invW = stiffness / W;
+
+		b2Vec2 d = v - (1.0f / 3.0f) * (b0 + v + b1);
+
+		b2Vec2 db0 = 2.0f * wb0 * invW * d;
+		b2Vec2 dv = -4.0f * wv * invW * d;
+		b2Vec2 db1 = 2.0f * wb1 * invW * d;
+
+		b0 += db0;
+		v += dv;
+		b1 += db1;
+
+		m_ps[c.i1] = b0;
+		m_ps[c.i2] = v;
+		m_ps[c.i3] = b1;
 	}
 }
 
